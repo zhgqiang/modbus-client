@@ -17,3 +17,5 @@
 
 /modbus
 modbus.exe
+write.exe
+/write

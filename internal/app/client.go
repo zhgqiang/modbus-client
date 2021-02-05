@@ -41,7 +41,7 @@ func init() {
 	pflag.Uint16("address", 0, "read address")
 	pflag.Uint16("quantity", 10, "read quantity")
 	pflag.Uint8("display", 9, "display data format [Binary:0 HEX:1 UnsignedDecimal:2 Integer:3 LongInteger:4 LongSwapped:5 Float:6 FloatSwapped:7 Double:8 DoubleSwapped:9]")
-
+	pflag.IntSlice("data", []int{}, "write data")
 	pflag.Parse()
 	viper.BindPFlags(pflag.CommandLine)
 	viper.SetConfigType("env")
@@ -111,6 +111,58 @@ func Run() {
 	sig := <-ch
 	log.Println("close service,", sig)
 	os.Exit(0)
+}
+
+func Write() {
+	var (
+		host     = viper.GetString("host")
+		timeout  = viper.GetInt("timeout")
+		idle     = viper.GetInt("idle")
+		deviceId = viper.GetInt("deviceId")
+		area     = viper.GetInt("area")
+		address  = uint16(viper.GetUint32("address"))
+		quantity = uint16(viper.GetUint32("quantity"))
+		data     = viper.GetIntSlice("data")
+	)
+	handler := modbus.NewTCPClientHandler(host)
+	handler.Timeout = time.Duration(timeout) * time.Second
+	handler.SlaveId = byte(deviceId)
+	handler.IdleTimeout = time.Duration(idle) * time.Second
+	handler.Logger = log.New(os.Stdout, fmt.Sprintf("host=%s ", host), log.LstdFlags)
+	err := handler.Connect()
+	if err != nil {
+		log.Fatalln("create modbus conn err, ", err.Error())
+	}
+	defer func() {
+		if err := handler.Close(); err != nil {
+			log.Println("close modbus conn err, ", err.Error())
+		}
+	}()
+	client := modbus.NewClient(handler)
+	buf := new(bytes.Buffer)
+	uint16s := make([]uint16, 0)
+	for _, d := range data {
+		uint16s = append(uint16s, uint16(d))
+	}
+	err = binary.Write(buf, binary.BigEndian, uint16s)
+	if err != nil {
+		log.Fatalln("binary Write failed, ", err.Error())
+	}
+	var rs []byte
+	switch area {
+	case 1:
+		rs, err = client.WriteMultipleCoils(address, quantity, buf.Bytes())
+	case 3:
+		rs, err = client.WriteMultipleRegisters(address, quantity, buf.Bytes())
+	default:
+		log.Fatalln("no found area")
+	}
+
+	if err != nil {
+		log.Fatalln("write err, ", err.Error())
+	}
+	log.Printf("write result, %s \n", string(rs))
+
 }
 
 func convert(display uint8, data []byte) (interface{}, error) {
