@@ -1,4 +1,4 @@
-package app
+package tcp
 
 import (
 	"bytes"
@@ -11,9 +11,11 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+	"io"
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -42,29 +44,26 @@ func init() {
 	pflag.Uint16("quantity", 10, "read quantity")
 	pflag.Uint8("display", 9, "display data format [Binary:0 HEX:1 UnsignedDecimal:2 Integer:3 LongInteger:4 LongSwapped:5 Float:6 FloatSwapped:7 Double:8 DoubleSwapped:9]")
 	pflag.IntSlice("data", []int{}, "write data")
+	pflag.Int("delay", 1, "delay ms")
 	pflag.Parse()
-	viper.BindPFlags(pflag.CommandLine)
+	err := viper.BindPFlags(pflag.CommandLine)
+	if err != nil {
+		panic(err)
+	}
 	viper.SetConfigType("env")
 	viper.AutomaticEnv()
 }
 
 func Run() {
 	var (
-		host     = viper.GetString("host")
-		timeout  = viper.GetInt("timeout")
-		idle     = viper.GetInt("idle")
-		deviceId = viper.GetInt("deviceId")
 		rate     = viper.GetInt("rate")
 		area     = viper.GetInt("area")
+		delay    = viper.GetInt("delay")
 		address  = uint16(viper.GetUint32("address"))
 		quantity = uint16(viper.GetUint32("quantity"))
 		display  = uint8(viper.GetUint32("display"))
 	)
-	handler := modbus.NewTCPClientHandler(host)
-	handler.Timeout = time.Duration(timeout) * time.Second
-	handler.SlaveId = byte(deviceId)
-	handler.IdleTimeout = time.Duration(idle) * time.Second
-	handler.Logger = log.New(os.Stdout, fmt.Sprintf("host=%s ", host), log.LstdFlags)
+	handler := getHandler()
 	err := handler.Connect()
 	if err != nil {
 		log.Fatalln("create modbus conn err, ", err.Error())
@@ -95,7 +94,43 @@ func Run() {
 		}
 
 		if err != nil {
-			log.Fatalln("read err, ", err.Error())
+			if strings.Contains(err.Error(), "timeout") {
+				log.Printf("timeout: %s \n", err.Error())
+				err := handler.Close()
+				if err != nil {
+					log.Printf("连接关闭失败,%s \n", err.Error())
+				}
+				time.Sleep(time.Millisecond * time.Duration(delay))
+				handler = getHandler()
+				err = handler.Connect()
+				if err != nil {
+					log.Printf("设备timeout重连失败,%s \n", err.Error())
+				} else {
+					client = modbus.NewClient(handler)
+				}
+			} else if strings.Contains(err.Error(), "An established connection was aborted by the software in your host machine") || strings.Contains(err.Error(), "An existing connection was forcibly closed by the remote host") || strings.Contains(err.Error(), "broken pipe") {
+				log.Printf("An established connection was aborted by the software in your host machine: %s \n", err.Error())
+				time.Sleep(time.Millisecond * time.Duration(delay))
+				handler = getHandler()
+				err = handler.Connect()
+				if err != nil {
+					log.Printf("设备重连失败,%s \n", err.Error())
+				} else {
+					client = modbus.NewClient(handler)
+				}
+			} else if err == io.EOF {
+				log.Printf("eof: %s \n", err.Error())
+				time.Sleep(time.Millisecond * time.Duration(delay))
+				handler = getHandler()
+				err = handler.Connect()
+				if err != nil {
+					log.Printf("设备EOF重连失败,%s \n", err.Error())
+				} else {
+					client = modbus.NewClient(handler)
+				}
+			} else {
+				log.Fatalln("read err, ", err.Error())
+			}
 		}
 
 		result, err := convert(display, rs)
@@ -111,6 +146,21 @@ func Run() {
 	sig := <-ch
 	log.Println("close service,", sig)
 	os.Exit(0)
+}
+
+func getHandler() *modbus.TCPClientHandler {
+	var (
+		host     = viper.GetString("host")
+		timeout  = viper.GetInt("timeout")
+		idle     = viper.GetInt("idle")
+		deviceId = viper.GetInt("deviceId")
+	)
+	handler := modbus.NewTCPClientHandler(host)
+	handler.Timeout = time.Duration(timeout) * time.Second
+	handler.SlaveId = byte(deviceId)
+	handler.IdleTimeout = time.Duration(idle) * time.Second
+	handler.Logger = log.New(os.Stdout, fmt.Sprintf("host=%s ", host), log.LstdFlags)
+	return handler
 }
 
 func Write() {
