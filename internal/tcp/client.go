@@ -39,7 +39,7 @@ func init() {
 	pflag.Int("idle", 30, "connect idle time")
 	pflag.Int("deviceId", 1, "device id")
 	pflag.Int("rate", 1, "read rate")
-	pflag.Int("area", 3, "read area [0 1 2 3]")
+	pflag.Int("area", 3, "read area [1 2 3 4]")
 	pflag.Uint16("address", 0, "read address")
 	pflag.Uint16("quantity", 10, "read quantity")
 	pflag.Uint8("display", 9, "display data format [Binary:0 HEX:1 UnsignedDecimal:2 Integer:3 LongInteger:4 LongSwapped:5 Float:6 FloatSwapped:7 Double:8 DoubleSwapped:9]")
